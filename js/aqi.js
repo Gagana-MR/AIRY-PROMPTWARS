@@ -19,7 +19,7 @@ export const AQI_LEVELS = [
     outdoorRating: 'Perfect for Running & Sports 🏃‍♂️',
     maskAdvice: 'No mask needed. Breathe that fresh oxygen!',
     ventilationAdvice: 'Open all windows! Let the fresh breeze in 🪟',
-    purifierAdvice: 'Purifier can take a chill nap 💤'
+    purifierAdvice: 'Purifier can stay on Low / Eco mode'
   },
   {
     min: 51,
@@ -35,23 +35,23 @@ export const AQI_LEVELS = [
     outdoorRating: 'Good for Outdoor Activities 🚴',
     maskAdvice: 'Not needed unless you have asthma or severe allergies',
     ventilationAdvice: 'Safe to ventilate during midday hours 🪟',
-    purifierAdvice: 'Low / Auto mode on purifier is plenty'
+    purifierAdvice: 'Low / Auto mode on True HEPA purifier'
   },
   {
     min: 101,
     max: 150,
     tag: 'A bit sketchy 🤨',
     shortStatus: 'Sensitive Alert',
-    vibeText: 'Atmosphere is giving minor attitude today. Asthma gang & allergy besties should definitely tone down the intense cardio outdoors.',
+    vibeText: 'Atmosphere is giving minor attitude today. Asthma gang & allergy besties should definitely tone down intense cardio outdoors.',
     healthExplanation: 'Unhealthy for sensitive groups. Members of sensitive groups (children, elderly, asthmatics) may experience health effects. The general public is less likely to be affected.',
     color: '#fb923c',
     colorRgb: '251, 146, 60',
     severity: 'sensitive',
     badgeClass: 'bg-orange-400/15 text-orange-400 border-orange-400/30',
     outdoorRating: 'Take Frequent Breaks Outdoors 🚶',
-    maskAdvice: 'Sensitive individuals consider a light mask or N95 in traffic',
+    maskAdvice: 'Sensitive individuals wear certified N95/FFP2 in traffic',
     ventilationAdvice: 'Keep windows shut during peak commute hours ⚠️',
-    purifierAdvice: 'Turn indoor purifier to Medium speed'
+    purifierAdvice: 'Run True HEPA purifier on Medium speed'
   },
   {
     min: 151,
@@ -67,23 +67,23 @@ export const AQI_LEVELS = [
     outdoorRating: 'Avoid Outdoor Workouts (Go Gym/Indoor) 🏋️',
     maskAdvice: 'Certified N95 / FFP2 mask recommended outside 😷',
     ventilationAdvice: 'Seal windows and doors. Avoid outside draft 🚫',
-    purifierAdvice: 'Run HEPA air purifier on High continuously'
+    purifierAdvice: 'Run True HEPA purifier on High continuously'
   },
   {
     min: 201,
     max: 300,
     tag: 'Major red flag 🚩',
     shortStatus: 'Very Unhealthy',
-    vibeText: 'Certified cooked! Outdoor air is an absolute hazard right now. Running outside today is basically inhaling secondhand exhaust pipe. Stay inside fr.',
+    vibeText: 'Certified cooked! Outdoor air is an absolute hazard right now. Running outside today is basically speedrunning lung irritation. Stay inside fr.',
     healthExplanation: 'Health alert: The risk of health effects is increased for everyone. Strenuous outdoor physical exertion should be avoided.',
     color: '#c084fc',
     colorRgb: '192, 132, 252',
     severity: 'very-unhealthy',
     badgeClass: 'bg-purple-400/15 text-purple-300 border-purple-400/30',
     outdoorRating: 'Stay Indoors! Outdoor Cardio is Cancelled 🛑',
-    maskAdvice: 'N95 / KN95 is strictly required if you step foot outside 😷',
+    maskAdvice: 'Certified N95 / FFP2 strictly required outside 😷',
     ventilationAdvice: 'Keep everything locked tight. Smog intrusion is real 🛑',
-    purifierAdvice: 'HEPA purifier on Maximum Turbo mode 🌪️'
+    purifierAdvice: 'True HEPA purifier on Maximum Turbo mode 🌪️'
   },
   {
     min: 301,
@@ -118,7 +118,7 @@ export const POLLUTANT_THRESHOLDS = {
     name: 'PM10',
     fullName: 'Coarse Particulates (≤ 10 µm)',
     unit: 'µg/m³',
-    description: 'Inhalable dust, pollen, and mold spores that cause throat dryness, coughing, and upper airway irritation.',
+    description: 'Inhalable dust, pollen, and coarse debris that cause throat dryness, coughing, and upper airway irritation.',
     good: 45,
     moderate: 100,
     unhealthy: 200,
@@ -170,9 +170,34 @@ export const POLLUTANT_THRESHOLDS = {
  * Get Gen-Z status object based on US AQI
  */
 export function getAQIStatus(aqiValue) {
-  const val = Math.round(Number(aqiValue) || 0);
+  if (aqiValue === null || aqiValue === undefined || isNaN(Number(aqiValue))) {
+    return getUnavailableStatus();
+  }
+  const val = Math.round(Number(aqiValue));
   const found = AQI_LEVELS.find(lvl => val >= lvl.min && val <= lvl.max);
   return found || AQI_LEVELS[AQI_LEVELS.length - 1];
+}
+
+/**
+ * Get status when API telemetry is unreachable
+ */
+export function getUnavailableStatus() {
+  return {
+    min: 0,
+    max: 0,
+    tag: 'Data Offline 📡',
+    shortStatus: 'Offline',
+    vibeText: 'Atmospheric telemetry is temporarily unreachable for this location. Do not assume the air is clean — exercise caution if venturing outdoors.',
+    healthExplanation: 'Real-time satellite and ground sensor readings could not be retrieved. If you notice visible haze or have respiratory sensitivities like asthma, stay indoors or wear a certified N95 mask until readings return.',
+    color: '#94a3b8',
+    colorRgb: '148, 163, 184',
+    severity: 'unavailable',
+    badgeClass: 'bg-slate-800 text-slate-300 border-slate-700',
+    outdoorRating: 'Caution: Live air data unverified ⚠️',
+    maskAdvice: 'N95 advised if outdoor smog or haze is visible 😷',
+    ventilationAdvice: 'Keep windows closed until AQI is verified 🪟',
+    purifierAdvice: 'Keep True HEPA purifier running on Auto/Medium'
+  };
 }
 
 /**
@@ -182,7 +207,11 @@ export function evaluatePollutant(key, value) {
   const meta = POLLUTANT_THRESHOLDS[key];
   if (!meta) return { status: 'Normal', color: '#94a3b8', percentage: 50 };
 
-  const val = Number(value) || 0;
+  if (value === null || value === undefined || isNaN(Number(value))) {
+    return { status: 'Offline', color: '#64748b', percentage: 0, val: '--', meta };
+  }
+
+  const val = Number(value);
   let status = 'Good';
   let color = '#ccff00';
   let percentage = Math.min(100, Math.round((val / meta.good) * 35));

@@ -20,59 +20,105 @@ const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes cache
 
 /**
  * Fetch real-time Air Quality data for latitude & longitude
+ * @param {number} lat Latitude
+ * @param {number} lon Longitude
+ * @param {boolean} forceRefresh If true, bypasses sessionStorage cache
  */
-export async function fetchAirQuality(lat, lon) {
-  const cacheKey = `airy_aqi_${lat.toFixed(3)}_${lon.toFixed(3)}`;
-  try {
-    const cached = sessionStorage.getItem(cacheKey);
-    if (cached) {
-      const parsed = JSON.parse(cached);
-      if (Date.now() - parsed.timestamp < CACHE_TTL_MS) {
-        return { data: parsed.data, fromCache: true };
+export async function fetchAirQuality(lat, lon, forceRefresh = false) {
+  const normLat = Number(lat).toFixed(4);
+  const normLon = Number(lon).toFixed(4);
+  const cacheKey = `airy_aqi_${normLat}_${normLon}`;
+
+  if (forceRefresh) {
+    try {
+      sessionStorage.removeItem(cacheKey);
+    } catch (e) {}
+  } else {
+    try {
+      const cached = sessionStorage.getItem(cacheKey);
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Date.now() - parsed.timestamp < CACHE_TTL_MS) {
+          return { data: parsed.data, fromCache: true };
+        }
       }
+    } catch (e) {
+      console.warn('Session storage read failed', e);
     }
-  } catch (e) {
-    console.warn('Session storage read failed', e);
   }
 
   const endpoint = new URL('https://air-quality-api.open-meteo.com/v1/air-quality');
-  endpoint.searchParams.set('latitude', lat);
-  endpoint.searchParams.set('longitude', lon);
+  endpoint.searchParams.set('latitude', normLat);
+  endpoint.searchParams.set('longitude', normLon);
   endpoint.searchParams.set('current', 'european_aqi,us_aqi,pm10,pm2_5,carbon_monoxide,nitrogen_dioxide,sulphur_dioxide,ozone');
   endpoint.searchParams.set('hourly', 'pm2_5,pm10,us_aqi,ozone');
   endpoint.searchParams.set('timezone', 'auto');
   endpoint.searchParams.set('forecast_days', '2');
 
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 12000);
-
-  try {
-    const response = await fetch(endpoint.toString(), { signal: controller.signal });
-    clearTimeout(timeoutId);
-
-    if (!response.ok) {
-      throw new Error(`Open-Meteo returned status ${response.status}: ${response.statusText}`);
-    }
-
-    const json = await response.json();
-    
-    // Validate current data
-    if (!json.current) {
-      throw new Error('Air quality data unavailable for this location.');
-    }
+  // Attempt fetch with 1 automatic retry on temporary network failure
+  let lastError = null;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
 
     try {
-      sessionStorage.setItem(cacheKey, JSON.stringify({ timestamp: Date.now(), data: json }));
-    } catch (e) {
-      // Storage full or unavailable
-    }
+      const response = await fetch(endpoint.toString(), {
+        signal: controller.signal,
+        headers: {
+          'Accept': 'application/json'
+        }
+      });
+      clearTimeout(timeoutId);
 
-    return { data: json, fromCache: false };
-  } catch (err) {
-    clearTimeout(timeoutId);
-    console.error('Failed to fetch air quality:', err);
-    throw err;
+      if (!response.ok) {
+        throw new Error(`Open-Meteo returned status ${response.status}: ${response.statusText}`);
+      }
+
+      const json = await response.json();
+      
+      // Validate current telemetry exists
+      if (!json || !json.current) {
+        throw new Error('Air quality sensor data is temporarily unavailable for these coordinates.');
+      }
+
+      // Compute tomorrow's forecast metrics if hourly data is present
+      if (json.hourly && Array.isArray(json.hourly.us_aqi)) {
+        // Next day is typically hours 24-47
+        const tomorrowAqiSlice = json.hourly.us_aqi.slice(24, 48).filter(v => typeof v === 'number');
+        const tomorrowPm25Slice = (json.hourly.pm2_5 || []).slice(24, 48).filter(v => typeof v === 'number');
+        
+        if (tomorrowAqiSlice.length > 0) {
+          const avgAqi = Math.round(tomorrowAqiSlice.reduce((a, b) => a + b, 0) / tomorrowAqiSlice.length);
+          const maxAqi = Math.max(...tomorrowAqiSlice);
+          const avgPm25 = tomorrowPm25Slice.length > 0 
+            ? (tomorrowPm25Slice.reduce((a, b) => a + b, 0) / tomorrowPm25Slice.length).toFixed(1)
+            : null;
+          
+          json.tomorrowForecast = {
+            avgAqi,
+            maxAqi,
+            avgPm25
+          };
+        }
+      }
+
+      try {
+        sessionStorage.setItem(cacheKey, JSON.stringify({ timestamp: Date.now(), data: json }));
+      } catch (e) {}
+
+      return { data: json, fromCache: false };
+    } catch (err) {
+      clearTimeout(timeoutId);
+      lastError = err;
+      if (attempt === 1) {
+        // Wait 800ms before second try
+        await new Promise(r => setTimeout(r, 800));
+      }
+    }
   }
+
+  console.error('Failed to fetch air quality after retry:', lastError);
+  throw lastError || new Error('Network error connecting to Open-Meteo API.');
 }
 
 /**
@@ -89,7 +135,9 @@ export async function searchCities(query) {
   endpoint.searchParams.set('format', 'json');
 
   try {
-    const response = await fetch(endpoint.toString());
+    const response = await fetch(endpoint.toString(), {
+      headers: { 'Accept': 'application/json' }
+    });
     if (!response.ok) return [];
     const data = await response.json();
     if (!data.results || !Array.isArray(data.results)) return [];
@@ -112,7 +160,6 @@ export async function searchCities(query) {
  */
 export async function reverseGeocode(lat, lon) {
   try {
-    // Check if it matches any popular city closely
     for (const city of POPULAR_CITIES) {
       const dLat = Math.abs(city.lat - lat);
       const dLon = Math.abs(city.lon - lon);
@@ -121,7 +168,6 @@ export async function reverseGeocode(lat, lon) {
       }
     }
 
-    // Try BigDataCloud open client-side geocoding API or default fallback
     const res = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=en`);
     if (res.ok) {
       const data = await res.json();
@@ -140,7 +186,7 @@ export async function reverseGeocode(lat, lon) {
   return {
     name: 'Your Location',
     country: '',
-    admin: `${lat.toFixed(2)}°, ${lon.toFixed(2)}°`,
+    admin: `${Number(lat).toFixed(2)}°, ${Number(lon).toFixed(2)}°`,
     lat,
     lon
   };

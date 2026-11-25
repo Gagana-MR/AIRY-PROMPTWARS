@@ -5,7 +5,7 @@
  */
 
 import { fetchAirQuality, searchCities, reverseGeocode, POPULAR_CITIES, DEFAULT_CITY } from './api.js';
-import { getAQIStatus, evaluatePollutant, POLLUTANT_THRESHOLDS } from './aqi.js';
+import { getAQIStatus, getUnavailableStatus, evaluatePollutant, POLLUTANT_THRESHOLDS } from './aqi.js';
 import { AiryAssistant } from './ai-assistant.js';
 import { SmogCalculator, TRANSPORT_MODES, COMMUTE_FREQUENCIES } from './calculator.js';
 import { EcoStreakManager, DAILY_ACTIONS, STREAK_BADGES } from './streak.js';
@@ -141,7 +141,23 @@ class AiryApp {
     this.citySearchInput.addEventListener('input', (e) => {
       const q = e.target.value;
       clearTimeout(this.searchDebounceTimer);
-      this.searchDebounceTimer = setTimeout(() => this.handleCitySearch(q), 300);
+      this.searchDebounceTimer = setTimeout(() => this.handleCitySearch(q), 280);
+    });
+
+    // Enter key support for instant search selection
+    this.citySearchInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        const firstItem = this.searchResultsDropdown.querySelector('.search-result-item');
+        if (firstItem) {
+          firstItem.click();
+        } else if (this.citySearchInput.value.trim().length >= 2) {
+          this.handleCitySearch(this.citySearchInput.value.trim()).then(() => {
+            const item = this.searchResultsDropdown.querySelector('.search-result-item');
+            if (item) item.click();
+          });
+        }
+      }
     });
 
     // Close search dropdown on click outside
@@ -154,18 +170,26 @@ class AiryApp {
     // Geolocation
     this.btnGeoLocation.addEventListener('click', () => this.handleCurrentLocation());
 
-    // Refresh AQI
+    // Refresh AQI button (bypasses cache)
     if (this.btnRefreshAQI) {
       this.btnRefreshAQI.addEventListener('click', () => {
         this.btnRefreshAQI.classList.add('animate-spin');
-        this.loadCityAirQuality(this.currentCity).finally(() => {
+        this.loadCityAirQuality(this.currentCity, true).finally(() => {
           setTimeout(() => this.btnRefreshAQI.classList.remove('animate-spin'), 600);
         });
       });
     }
 
+    // Retry button on error banner
     if (this.btnRetryFetch) {
-      this.btnRetryFetch.addEventListener('click', () => this.loadCityAirQuality(this.currentCity));
+      this.btnRetryFetch.addEventListener('click', () => {
+        this.btnRetryFetch.innerHTML = '<span class="inline-block animate-spin mr-1">↻</span> Reconnecting...';
+        this.btnRetryFetch.disabled = true;
+        this.loadCityAirQuality(this.currentCity, true).finally(() => {
+          this.btnRetryFetch.innerHTML = 'Retry Connection';
+          this.btnRetryFetch.disabled = false;
+        });
+      });
     }
 
     // Health Accordion
@@ -196,7 +220,7 @@ class AiryApp {
       this.suggestedPromptsList.addEventListener('click', (e) => {
         const pill = e.target.closest('.chat-prompt-pill');
         if (pill) {
-          const text = pill.innerText.replace(/[🏃🔬🚴😷]/g, '').trim();
+          const text = pill.innerText.replace(/[🏃🔬🚴😷🌿📅🫁⏱️]/g, '').trim();
           this.handleUserChatMessage(text);
         }
       });
@@ -319,7 +343,7 @@ class AiryApp {
 
     results.forEach(res => {
       const item = document.createElement('div');
-      item.className = 'px-3 py-2 rounded-xl hover:bg-white/10 cursor-pointer flex items-center justify-between transition';
+      item.className = 'search-result-item px-3 py-2 rounded-xl hover:bg-white/10 cursor-pointer flex items-center justify-between transition';
       item.innerHTML = `
         <div>
           <div class="text-xs font-bold text-white">${res.name}</div>
@@ -362,21 +386,22 @@ class AiryApp {
     );
   }
 
-  async loadCityAirQuality(city) {
+  async loadCityAirQuality(city, forceRefresh = false) {
     this.currentCity = city;
     this.renderPopularCityPills();
 
-    // Show loading
+    // Show loading shimmer
     this.dashboardLoadingState.classList.remove('hidden');
     this.dashboardErrorState.classList.add('hidden');
     this.dashboardContent.classList.add('opacity-40', 'pointer-events-none');
 
     try {
-      const res = await fetchAirQuality(city.lat, city.lon);
+      const res = await fetchAirQuality(city.lat, city.lon, forceRefresh);
       this.currentAirData = res.data;
       this.renderAirQualityDashboard();
 
       this.dashboardLoadingState.classList.add('hidden');
+      this.dashboardErrorState.classList.add('hidden');
       this.dashboardContent.classList.remove('opacity-40', 'pointer-events-none');
     } catch (err) {
       console.error('Failed to load air quality:', err);
@@ -384,6 +409,9 @@ class AiryApp {
       this.dashboardErrorState.classList.remove('hidden');
       this.dashboardErrorMessage.innerText = err.message || 'Network error fetching data.';
       this.dashboardContent.classList.remove('opacity-40', 'pointer-events-none');
+      
+      // Update dashboard to safe offline/unavailable state instead of misleading "Fresh vibes"
+      this.renderUnavailableDashboard(err.message);
     }
   }
 
@@ -399,7 +427,7 @@ class AiryApp {
     // City headers
     this.activeCityTitle.innerText = this.currentCity.name;
     this.activeCityCountry.innerText = this.currentCity.country || 'GLOBAL';
-    this.activeCityCoords.innerText = `${this.currentCity.lat.toFixed(2)}° N, ${this.currentCity.lon.toFixed(2)}° E`;
+    this.activeCityCoords.innerText = `${Number(this.currentCity.lat).toFixed(2)}° N, ${Number(this.currentCity.lon).toFixed(2)}° E`;
 
     // AQI Gauge
     this.mainAqiValue.innerText = usAqi;
@@ -432,7 +460,7 @@ class AiryApp {
     // 24-hr Hourly trend chart
     this.renderHourlyTrendChart();
 
-    // Update Assistant context
+    // Update Assistant context with live reading & forecast trajectory
     this.assistant.setContext({
       cityName: this.currentCity.name,
       aqi: usAqi,
@@ -444,12 +472,101 @@ class AiryApp {
       co: cur.carbon_monoxide,
       no2: cur.nitrogen_dioxide,
       so2: cur.sulphur_dioxide,
-      o3: cur.ozone
+      o3: cur.ozone,
+      tomorrowForecast: this.currentAirData.tomorrowForecast || null,
+      isUnavailable: false
     });
 
     this.chatContextCity.innerText = this.currentCity.name;
     this.chatContextAqi.innerText = usAqi;
     this.chatContextAqi.style.color = status.color;
+
+    if (window.lucide) window.lucide.createIcons();
+  }
+
+  renderUnavailableDashboard(errorMessage) {
+    const unavail = getUnavailableStatus();
+
+    this.activeCityTitle.innerText = this.currentCity.name;
+    this.activeCityCountry.innerText = this.currentCity.country || 'GLOBAL';
+    this.activeCityCoords.innerText = `${Number(this.currentCity.lat).toFixed(2)}° N, ${Number(this.currentCity.lon).toFixed(2)}° E`;
+
+    // AQI Gauge showing offline status
+    this.mainAqiValue.innerText = '--';
+    this.mainAqiValue.style.color = unavail.color;
+    this.mainAqiShortStatus.innerText = unavail.shortStatus;
+
+    // Gen-Z Tag showing offline cautious warning
+    this.genZStatusTag.innerText = unavail.tag;
+    this.genZStatusTag.className = `vibe-tag ${unavail.badgeClass} font-display`;
+    this.genZVibeText.innerText = unavail.vibeText;
+
+    this.euroAqiValue.innerText = '--';
+    this.euroAqiLabel.innerText = 'Offline';
+    this.healthExplanationText.innerText = unavail.healthExplanation;
+
+    if (this.ambientGlow) {
+      document.documentElement.style.setProperty('--active-glow', `rgba(${unavail.colorRgb}, 0.15)`);
+    }
+
+    // Action Tips cautious offline advice
+    this.tipOutdoor.innerText = unavail.outdoorRating;
+    this.tipMask.innerText = unavail.maskAdvice;
+    this.tipVentilation.innerText = unavail.ventilationAdvice;
+    this.tipPurifier.innerText = unavail.purifierAdvice;
+
+    // Render offline pollutant cards
+    const keys = ['pm2_5', 'pm10', 'carbon_monoxide', 'nitrogen_dioxide', 'sulphur_dioxide', 'ozone'];
+    this.pollutantsGrid.innerHTML = '';
+    keys.forEach(key => {
+      const evalRes = evaluatePollutant(key, null);
+      const meta = evalRes.meta;
+
+      const card = document.createElement('div');
+      card.className = 'glass-panel p-4 flex flex-col justify-between space-y-3 border-white/5 opacity-60';
+      card.innerHTML = `
+        <div>
+          <div class="flex items-center justify-between text-xs font-mono">
+            <span class="font-bold text-white">${meta.name}</span>
+            <span class="text-[10px] uppercase px-1.5 py-0.5 rounded font-mono font-bold text-slate-400 bg-white/5">
+              Offline
+            </span>
+          </div>
+          <p class="text-[10px] text-slate-500 font-sans line-clamp-1 mt-0.5">${meta.fullName}</p>
+        </div>
+
+        <div>
+          <div class="flex items-baseline gap-1">
+            <span class="text-xl sm:text-2xl font-black font-mono text-slate-500">--</span>
+            <span class="text-[10px] text-slate-600 font-mono">${meta.unit}</span>
+          </div>
+          <div class="w-full h-1.5 bg-black/40 rounded-full mt-2 overflow-hidden border border-white/5">
+            <div class="h-full rounded-full bg-slate-700" style="width: 0%;"></div>
+          </div>
+          <div class="flex justify-between text-[9px] font-mono text-slate-600 mt-1">
+            <span>WHO: ${meta.good}</span>
+            <span>Data Pending</span>
+          </div>
+        </div>
+      `;
+      this.pollutantsGrid.appendChild(card);
+    });
+
+    // Trend chart placeholder
+    this.hourlyTrendSvg.innerHTML = '<text x="50%" y="50%" text-anchor="middle" fill="#64748b" font-size="12" font-family="monospace">Live 24-hour telemetry temporarily unavailable</text>';
+
+    // Update assistant context
+    this.assistant.setContext({
+      cityName: this.currentCity.name,
+      aqi: '--',
+      isUnavailable: true,
+      statusTag: unavail.tag,
+      healthExplanation: unavail.healthExplanation
+    });
+
+    this.chatContextCity.innerText = this.currentCity.name;
+    this.chatContextAqi.innerText = '--';
+    this.chatContextAqi.style.color = unavail.color;
 
     if (window.lucide) window.lucide.createIcons();
   }
@@ -498,14 +615,13 @@ class AiryApp {
 
   renderHourlyTrendChart() {
     if (!this.currentAirData || !this.currentAirData.hourly) {
-      this.hourlyTrendSvg.innerHTML = '<text x="50%" y="50%" text-anchor="middle" fill="#64748b" font-size="12">Hourly trend unavailable</text>';
+      this.hourlyTrendSvg.innerHTML = '<text x="50%" y="50%" text-anchor="middle" fill="#64748b" font-size="12" font-family="monospace">Hourly trend unavailable</text>';
       return;
     }
 
     const hourly = this.currentAirData.hourly;
     const times = hourly.time || [];
     const aqiVals = (hourly.us_aqi || hourly.pm2_5 || []).slice(0, 24);
-    const pmVals = (hourly.pm2_5 || []).slice(0, 24);
 
     if (aqiVals.length < 2) return;
 
@@ -568,12 +684,13 @@ class AiryApp {
     // Scroll to bottom
     this.chatMessages.scrollTop = this.chatMessages.scrollHeight;
 
-    // Show typing indicator
+    // Show attractive typing indicator
     const typingIndicator = document.createElement('div');
     typingIndicator.id = 'aiTypingIndicator';
-    typingIndicator.className = 'flex items-center gap-2 p-3.5 rounded-2xl chat-bubble-ai max-w-[120px]';
+    typingIndicator.className = 'flex items-center gap-3 p-3.5 rounded-2xl chat-bubble-ai max-w-[200px] border border-white/10';
     typingIndicator.innerHTML = `
       <div class="dot-flashing ml-3"></div>
+      <span class="text-[11px] font-mono text-slate-400">Airy is thinking...</span>
     `;
     this.chatMessages.appendChild(typingIndicator);
     this.chatMessages.scrollTop = this.chatMessages.scrollHeight;
@@ -581,12 +698,12 @@ class AiryApp {
     try {
       const aiResponse = await this.assistant.ask(msgText);
       typingIndicator.remove();
-      this.renderSingleMessage(aiResponse, true); // with typewriter effect
+      this.renderSingleMessage(aiResponse, true);
     } catch (err) {
       typingIndicator.remove();
       this.renderSingleMessage({
         role: 'assistant',
-        text: "My bad bestie, hit a minor glitch! Ask me again in a sec.",
+        text: "My bad bestie, hit a temporary connection hiccup! Try asking me again.",
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       });
     }
@@ -605,28 +722,46 @@ class AiryApp {
   renderSingleMessage(msg, animate = false) {
     const isUser = msg.role === 'user';
     const wrapper = document.createElement('div');
-    wrapper.className = `flex flex-col ${isUser ? 'items-end' : 'items-start'} space-y-1`;
+    wrapper.className = `flex flex-col ${isUser ? 'items-end' : 'items-start'} space-y-1.5`;
 
     const bubble = document.createElement('div');
-    bubble.className = `p-4 rounded-2xl max-w-[85%] text-xs leading-relaxed ${
+    bubble.className = `p-4 rounded-2xl max-w-[90%] text-xs leading-relaxed ${
       isUser ? 'chat-bubble-user font-medium' : 'chat-bubble-ai font-sans'
     }`;
 
-    // Format basic bold & newlines
+    // Format basic bold, italics, KaTeX inline math approximations, and newlines
     let formatted = msg.text
-      .replace(/\*\*(.*?)\*\*/g, '<strong class="text-white">$1</strong>')
+      .replace(/\*\*(.*?)\*\*/g, '<strong class="text-white font-semibold">$1</strong>')
       .replace(/\*(.*?)\*/g, '<em class="text-[#ccff00]">$1</em>')
+      .replace(/\$([^\$]+)\$/g, '<code class="font-mono text-[#c084fc]">$1</code>')
       .replace(/\n\n/g, '<div class="h-2"></div>')
       .replace(/\n/g, '<br/>');
 
     bubble.innerHTML = formatted;
+    wrapper.appendChild(bubble);
+
+    // If assistant message includes dynamic suggestions, render clickable prompt chips
+    if (!isUser && Array.isArray(msg.suggestions) && msg.suggestions.length > 0) {
+      const suggestionsContainer = document.createElement('div');
+      suggestionsContainer.className = 'flex flex-wrap gap-1.5 pt-1 max-w-[95%]';
+      msg.suggestions.forEach(sug => {
+        const chip = document.createElement('button');
+        chip.type = 'button';
+        chip.className = 'px-2.5 py-1 rounded-full text-[11px] font-sans bg-white/5 hover:bg-[#ccff00]/15 hover:text-[#ccff00] border border-white/10 hover:border-[#ccff00]/30 text-slate-300 transition text-left cursor-pointer';
+        chip.innerText = sug;
+        chip.addEventListener('click', () => {
+          this.handleUserChatMessage(sug);
+        });
+        suggestionsContainer.appendChild(chip);
+      });
+      wrapper.appendChild(suggestionsContainer);
+    }
 
     const timeSpan = document.createElement('span');
     timeSpan.className = 'text-[9px] font-mono text-slate-500 px-1';
     timeSpan.innerText = msg.timestamp || '';
-
-    wrapper.appendChild(bubble);
     wrapper.appendChild(timeSpan);
+
     this.chatMessages.appendChild(wrapper);
 
     if (window.lucide) window.lucide.createIcons();

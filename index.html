@@ -186,19 +186,19 @@
             <!-- Aura Gauge -->
             <div class="aqi-radial-gauge w-44 h-44 sm:w-48 sm:h-48 rounded-full border border-white/15 bg-black/40 flex flex-col items-center justify-center relative shadow-2xl">
               <span class="text-xs uppercase font-mono tracking-widest text-slate-400">US AQI</span>
-              <span id="mainAqiValue" class="text-6xl sm:text-7xl font-black font-display tracking-tight text-[#ccff00]">--</span>
-              <span id="mainAqiShortStatus" class="text-xs font-bold uppercase tracking-wider text-slate-300 mt-1">Measuring...</span>
+              <span id="mainAqiValue" class="text-6xl sm:text-7xl font-black font-display tracking-tight text-slate-400">--</span>
+              <span id="mainAqiShortStatus" class="text-xs font-bold uppercase tracking-wider text-slate-400 mt-1">Connecting...</span>
             </div>
 
             <!-- Gen-Z Status Tag & Vibe Description -->
             <div class="space-y-3 text-center sm:text-left max-w-sm">
               <div class="inline-block">
-                <span id="genZStatusTag" class="vibe-tag bg-[#ccff00]/15 text-[#ccff00] border border-[#ccff00]/30 font-display">
-                  Fresh vibes ✨
+                <span id="genZStatusTag" class="vibe-tag bg-white/10 text-slate-300 border border-white/15 font-display">
+                  Connecting Sensors... 🛰️
                 </span>
               </div>
-              <p id="genZVibeText" class="text-sm text-slate-200 leading-relaxed font-sans">
-                Air is literally chef's kiss. Lungs are thriving, vibe check is 100% passed. Open your windows and touch some grass!
+              <p id="genZVibeText" class="text-sm text-slate-300 leading-relaxed font-sans">
+                Connecting to atmospheric satellites and ground telemetry stations for real-time readings...
               </p>
               <div class="flex items-center gap-4 text-xs font-mono text-slate-400 pt-2 border-t border-white/10">
                 <div>European AQI: <span id="euroAqiValue" class="text-white font-bold">--</span></div>
@@ -375,13 +375,16 @@
               Is it safe to go outside today? 🏃
             </button>
             <button class="chat-prompt-pill glass-pill px-3 py-1.5 text-xs text-slate-300 hover:text-[#ccff00] hover:border-[#ccff00]/40 transition">
-              What does PM2.5 mean? 🔬
+              What about cycling then? 🚴
             </button>
             <button class="chat-prompt-pill glass-pill px-3 py-1.5 text-xs text-slate-300 hover:text-[#ccff00] hover:border-[#ccff00]/40 transition">
-              Should I go cycling today? 🚴
+              What about tomorrow? 📅
             </button>
             <button class="chat-prompt-pill glass-pill px-3 py-1.5 text-xs text-slate-300 hover:text-[#ccff00] hover:border-[#ccff00]/40 transition">
-              How can I protect myself from pollution? 😷
+              Can houseplants clean indoor air? 🌿
+            </button>
+            <button class="chat-prompt-pill glass-pill px-3 py-1.5 text-xs text-slate-300 hover:text-[#ccff00] hover:border-[#ccff00]/40 transition">
+              What mask protects best? 😷
             </button>
           </div>
         </div>
