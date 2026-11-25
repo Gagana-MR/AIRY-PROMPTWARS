@@ -1,0 +1,38 @@
+# Environment & Secret files
+.env
+.env.local
+.env.*.local
+*.env
+
+# Operating System files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor & IDE directories
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Node & package artifacts
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Python runtime artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.log
+
+# Build & temporary files
+dist/
+build/
+*.tmp
+*.bak
